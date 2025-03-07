@@ -1,73 +1,80 @@
 const express = require("express");
-const fs = require("fs");
+const sequelize = require("./database");
+const Tarefa = require("./models/Tarefa");
+const { tarefaSchema } = require("./validations/tarefaValidation");
 
 const app = express();
 const PORT = 3000;
-const FILE_PATH = "tarefas.json";
 
 app.use(express.json());
 
-// Função para ler o arquivo JSON
-const lerTarefas = () => {
-    const data = fs.readFileSync(FILE_PATH);
-    return JSON.parse(data);
-};
-
-// Função para salvar tarefas no arquivo JSON
-const salvarTarefas = (tarefas) => {
-    fs.writeFileSync(FILE_PATH, JSON.stringify(tarefas, null, 2));
-};
+// Sincroniza os modelos com o banco de dados
+sequelize.sync()
+    .then(() => console.log("Banco de dados sincronizado!"))
+    .catch((error) => console.error("Erro ao sincronizar o banco:", error));
 
 // Rota para listar todas as tarefas
-app.get("/tarefas", (req, res) => {
-    const tarefas = lerTarefas();
-    res.json(tarefas);
-});
-
-// Rota para adicionar uma nova tarefa
-app.post("/tarefas", (req, res) => {
-    const tarefas = lerTarefas();
-    const novaTarefa = {
-        id: tarefas.length + 1,
-        titulo: req.body.titulo,
-        concluida: false
-    };
-
-    tarefas.push(novaTarefa);
-    salvarTarefas(tarefas);
-
-    res.status(201).json(novaTarefa);
-});
-
-// Rota para atualizar uma tarefa
-app.put("/tarefas/:id", (req, res) => {
-    const tarefas = lerTarefas();
-    const id = parseInt(req.params.id);
-    const index = tarefas.findIndex(t => t.id === id);
-
-    if (index === -1) {
-        return res.status(404).json({ mensagem: "Tarefa não encontrada" });
+app.get("/tarefas", async (req, res) => {
+    try {
+        const tarefas = await Tarefa.findAll();
+        res.json(tarefas);
+    } catch (error) {
+        res.status(500).json({ mensagem: error.message });
     }
+});
 
-    tarefas[index].titulo = req.body.titulo || tarefas[index].titulo;
-    tarefas[index].concluida = req.body.concluida !== undefined ? req.body.concluida : tarefas[index].concluida;
+// Rota para adicionar uma nova tarefa com validação
+app.post("/tarefas", async (req, res) => {
+    const { error } = tarefaSchema.validate(req.body);
+    if (error) {
+        return res.status(400).json({ mensagem: error.details[0].message });
+    }
     
-    salvarTarefas(tarefas);
-    res.json(tarefas[index]);
+    try {
+        const novaTarefa = await Tarefa.create({ titulo: req.body.titulo });
+        res.status(201).json(novaTarefa);
+    } catch (error) {
+        res.status(500).json({ mensagem: error.message });
+    }
+});
+
+// Rota para atualizar uma tarefa com validação
+app.put("/tarefas/:id", async (req, res) => {
+    const { error } = tarefaSchema.validate(req.body);
+    if (error) {
+        return res.status(400).json({ mensagem: error.details[0].message });
+    }
+    
+    try {
+        const tarefa = await Tarefa.findByPk(req.params.id);
+        if (!tarefa) {
+            return res.status(404).json({ mensagem: "Tarefa não encontrada" });
+        }
+
+        await tarefa.update({
+            titulo: req.body.titulo || tarefa.titulo,
+            concluida: req.body.concluida !== undefined ? req.body.concluida : tarefa.concluida,
+        });
+
+        res.json(tarefa);
+    } catch (error) {
+        res.status(500).json({ mensagem: error.message });
+    }
 });
 
 // Rota para deletar uma tarefa
-app.delete("/tarefas/:id", (req, res) => {
-    let tarefas = lerTarefas();
-    const id = parseInt(req.params.id);
-    const novasTarefas = tarefas.filter(t => t.id !== id);
+app.delete("/tarefas/:id", async (req, res) => {
+    try {
+        const tarefa = await Tarefa.findByPk(req.params.id);
+        if (!tarefa) {
+            return res.status(404).json({ mensagem: "Tarefa não encontrada" });
+        }
 
-    if (tarefas.length === novasTarefas.length) {
-        return res.status(404).json({ mensagem: "Tarefa não encontrada" });
+        await tarefa.destroy();
+        res.status(204).send();
+    } catch (error) {
+        res.status(500).json({ mensagem: error.message });
     }
-
-    salvarTarefas(novasTarefas);
-    res.status(204).send();
 });
 
 app.listen(PORT, () => {
